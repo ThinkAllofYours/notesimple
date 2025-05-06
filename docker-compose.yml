@@ -1,0 +1,64 @@
+version: '3.8' # 사용 가능한 최신 버전 사용
+
+services:
+  # PostgreSQL 서비스 (RDB)
+  postgres-db:
+    image: postgres:15 # 원하는 PostgreSQL 버전 사용
+    container_name: notesimple-postgres
+    environment:
+      POSTGRES_DB: notesimple_db # 사용할 데이터베이스 이름
+      POSTGRES_USER: postgres # DB 접속 유저명
+      POSTGRES_PASSWORD: postgres # DB 접속 비밀번호
+    volumes:
+      - postgres_data:/var/lib/postgresql/data # 데이터 영속성을 위한 볼륨 마운트
+    ports:
+      - "5432:5432" # 로컬에서 직접 DB 접속 시 필요
+    networks:
+      - notesimple-network
+    restart: unless-stopped
+
+  # Elasticsearch 서비스 (NoSQL - Phase 2에서 사용)
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.9.0 # 원하는 Elasticsearch 버전 사용 (라이선스 주의)
+    container_name: notesimple-elasticsearch
+    environment:
+      - discovery.type=single-node # 단일 노드 모드
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m # 메모리 설정 (로컬 환경에 맞게 조절)
+      - xpack.security.enabled=false # 로컬 테스트 편의상 보안 기능 비활성화 (실제 환경에서는 비추천)
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200" # Elasticsearch HTTP 포트
+      - "9300:9300" # Elasticsearch Transport 포트 (필요시)
+    networks:
+      - notesimple-network
+    restart: unless-stopped
+
+  # Spring Boot 애플리케이션 서비스
+  notesimple-app:
+    build: . # 현재 디렉토리의 Dockerfile을 사용하여 빌드
+    container_name: notesimple-app
+    depends_on: # DB 서비스들이 먼저 실행되도록 의존성 설정
+      - postgres-db
+      - elasticsearch # Phase 2부터 유효
+    environment:
+      # Spring Boot 설정 (application.yml에서 ${} 로 참조)
+      - SPRING_PROFILES_ACTIVE=docker # 'docker' 프로파일 활성화
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-db:5432/notesimple_db # Docker 네트워크 내의 DB 호스트명 사용
+      - SPRING_DATASOURCE_USERNAME=postgres
+      - SPRING_DATASOURCE_PASSWORD=postgres
+      - SPRING_JPA_HIBERNATE_DDL_AUTO=update # 개발 편의상 update 사용 (운영 환경에서는 validate 또는 none 권장)
+      - SPRING_ELASTICSEARCH_URIS=http://elasticsearch:9200 # Docker 네트워크 내의 ES 호스트명 사용
+    ports:
+      - "8080:8080" # 애플리케이션 포트 매핑
+    networks:
+      - notesimple-network
+    restart: unless-stopped
+
+volumes: # 데이터 영속성을 위한 명명된 볼륨 정의
+  postgres_data:
+  elasticsearch_data:
+
+networks: # 서비스 간 통신을 위한 사용자 정의 네트워크 정의
+  notesimple-network:
+    driver: bridge
